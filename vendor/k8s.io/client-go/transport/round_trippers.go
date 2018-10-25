@@ -47,6 +47,8 @@ func HTTPWrappersForConfig(config *Config, rt http.RoundTripper) (http.RoundTrip
 		rt = NewBearerAuthRoundTripper(config.BearerToken, rt)
 	case config.HasBasicAuth():
 		rt = NewBasicAuthRoundTripper(config.Username, config.Password, rt)
+	case config.HasCustomHeader():
+		rt = NewCustomHeaderRoundTripper(config.Header, config.HeaderValue, rt)
 	}
 	if len(config.UserAgent) > 0 {
 		rt = NewUserAgentRoundTripper(config.UserAgent, rt)
@@ -178,10 +180,22 @@ type basicAuthRoundTripper struct {
 	rt       http.RoundTripper
 }
 
+type customHeaderRoundTripper struct {
+	header string
+	value  string
+	rt     http.RoundTripper
+}
+
 // NewBasicAuthRoundTripper will apply a BASIC auth authorization header to a
 // request unless it has already been set.
 func NewBasicAuthRoundTripper(username, password string, rt http.RoundTripper) http.RoundTripper {
 	return &basicAuthRoundTripper{username, password, rt}
+}
+
+// NewCustomHeaderRoundTripper will apply a custom header header to a
+// request unless it has already been set.
+func NewCustomHeaderRoundTripper(header, value string, rt http.RoundTripper) http.RoundTripper {
+	return &customHeaderRoundTripper{header, value, rt}
 }
 
 func (rt *basicAuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -202,6 +216,25 @@ func (rt *basicAuthRoundTripper) CancelRequest(req *http.Request) {
 }
 
 func (rt *basicAuthRoundTripper) WrappedRoundTripper() http.RoundTripper { return rt.rt }
+
+func (rt *customHeaderRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if len(req.Header.Get(rt.header)) != 0 {
+		return rt.rt.RoundTrip(req)
+	}
+	req = utilnet.CloneRequest(req)
+	req.Header.Set(rt.header, rt.value)
+	return rt.rt.RoundTrip(req)
+}
+
+func (rt *customHeaderRoundTripper) CancelRequest(req *http.Request) {
+	if canceler, ok := rt.rt.(requestCanceler); ok {
+		canceler.CancelRequest(req)
+	} else {
+		glog.Errorf("CancelRequest not implemented")
+	}
+}
+
+func (rt *customHeaderRoundTripper) WrappedRoundTripper() http.RoundTripper { return rt.rt }
 
 // These correspond to the headers used in pkg/apis/authentication.  We don't want the package dependency,
 // but you must not change the values.

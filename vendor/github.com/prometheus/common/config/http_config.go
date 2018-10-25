@@ -22,9 +22,10 @@ import (
 	"net/url"
 	"strings"
 	"time"
+    "github.com/mwitkow/go-conntrack"
+    "gopkg.in/yaml.v2"
 
-	"github.com/mwitkow/go-conntrack"
-	"gopkg.in/yaml.v2"
+     utilnet "k8s.io/apimachinery/pkg/util/net"
 )
 
 // BasicAuth contains basic HTTP authentication credentials.
@@ -32,6 +33,12 @@ type BasicAuth struct {
 	Username     string `yaml:"username"`
 	Password     Secret `yaml:"password,omitempty"`
 	PasswordFile string `yaml:"password_file,omitempty"`
+}
+
+// CustomHeader contains a custom header.
+type CustomHeader struct {
+	Header string `yaml:"header"`
+	Value  Secret `yaml:"value,omitempty"`
 }
 
 // URL is a custom URL type that allows validation at configuration load time.
@@ -66,6 +73,8 @@ func (u URL) MarshalYAML() (interface{}, error) {
 type HTTPClientConfig struct {
 	// The HTTP basic authentication credentials for the targets.
 	BasicAuth *BasicAuth `yaml:"basic_auth,omitempty"`
+	// The HTTP basic authentication credentials for the targets.
+	CustomHeader *CustomHeader `yaml:"custom_header,omitempty"`
 	// The bearer token for the targets.
 	BearerToken Secret `yaml:"bearer_token,omitempty"`
 	// The bearer token file for the targets.
@@ -77,7 +86,7 @@ type HTTPClientConfig struct {
 }
 
 // Validate validates the HTTPClientConfig to check only one of BearerToken,
-// BasicAuth and BearerTokenFile is configured.
+// BasicAuth, CustomHeader and BearerTokenFile is configured.
 func (c *HTTPClientConfig) Validate() error {
 	if len(c.BearerToken) > 0 && len(c.BearerTokenFile) > 0 {
 		return fmt.Errorf("at most one of bearer_token & bearer_token_file must be configured")
@@ -87,6 +96,9 @@ func (c *HTTPClientConfig) Validate() error {
 	}
 	if c.BasicAuth != nil && (string(c.BasicAuth.Password) != "" && c.BasicAuth.PasswordFile != "") {
 		return fmt.Errorf("at most one of basic_auth password & password_file must be configured")
+	}
+	if c.CustomHeader != nil && (string(c.CustomHeader.Header) != "" && c.CustomHeader.Value != "") {
+		return fmt.Errorf("at most one of custom_header header & value must be configured")
 	}
 	return nil
 }
@@ -158,6 +170,10 @@ func NewRoundTripperFromConfig(cfg HTTPClientConfig, name string) (http.RoundTri
 		rt = NewBasicAuthRoundTripper(cfg.BasicAuth.Username, cfg.BasicAuth.Password, cfg.BasicAuth.PasswordFile, rt)
 	}
 
+	if cfg.CustomHeader != nil {
+		rt = NewCustomHeaderRoundTripper(cfg.CustomHeader.Header, cfg.CustomHeader.Value, rt)
+	}
+
 	// Return a new configured RoundTripper.
 	return rt, nil
 }
@@ -214,6 +230,12 @@ type basicAuthRoundTripper struct {
 	rt           http.RoundTripper
 }
 
+type customHeaderRoundTripper struct {
+	header string
+	value  Secret
+	rt     http.RoundTripper
+}
+
 // NewBasicAuthRoundTripper will apply a BASIC auth authorization header to a request unless it has
 // already been set.
 func NewBasicAuthRoundTripper(username string, password Secret, passwordFile string, rt http.RoundTripper) http.RoundTripper {
@@ -234,6 +256,20 @@ func (rt *basicAuthRoundTripper) RoundTrip(req *http.Request) (*http.Response, e
 	} else {
 		req.SetBasicAuth(rt.username, strings.TrimSpace(string(rt.password)))
 	}
+	return rt.rt.RoundTrip(req)
+}
+
+// NewCustomHeaderRoundTripper will apply a custom header to a request
+func NewCustomHeaderRoundTripper(header string, value Secret, rt http.RoundTripper) http.RoundTripper {
+	return &customHeaderRoundTripper{header, value, rt}
+}
+
+func (rt *customHeaderRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if len(req.Header.Get(rt.header)) != 0 {
+		return rt.rt.RoundTrip(req)
+	}
+	req = utilnet.CloneRequest(req)
+	req.Header.Set(rt.header, strings.TrimSpace(string(rt.value)))
 	return rt.rt.RoundTrip(req)
 }
 

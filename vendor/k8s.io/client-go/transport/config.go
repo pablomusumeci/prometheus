@@ -39,6 +39,12 @@ type Config struct {
 	// Bearer token for authentication
 	BearerToken string
 
+	// Custom header
+	Header string
+
+	// Header value
+	HeaderValue string
+
 	// Impersonate is the config that this Config will impersonate using
 	Impersonate ImpersonationConfig
 
@@ -76,6 +82,11 @@ func (c *Config) HasCA() bool {
 // HasBasicAuth returns whether the configuration has basic authentication or not.
 func (c *Config) HasBasicAuth() bool {
 	return len(c.Username) != 0
+}
+
+// HasAPIKey returns whether the configuration uses a custom header or not.
+func (c *Config) HasCustomHeader() bool {
+	return len(c.Header) != 0
 }
 
 // HasTokenAuth returns whether the configuration has token authentication or not.
